@@ -1,0 +1,63 @@
+pipeline {
+    agent any
+
+    environment {
+        DOCKERHUB_CREDENTIALS = credentials('dockerhub-credentials')
+        SSH_KEY = credentials('linux-ssh-key')
+        IMAGE_NAME = 'masungil/devops-step3'
+        LINUX_SERVER_IP = '3.38.246.161'
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                git branch: 'main', url: 'https://github.com/masungil70/devops_step3.git'
+            }
+        }
+
+        stage('Build') {
+            steps {
+                sh './gradlew clean build'
+            }
+        }
+
+        stage('Build Docker Image') {
+            steps {
+                script {
+                    docker.build("${env.IMAGE_NAME}:${env.BUILD_ID}")
+                }
+            }
+        }
+
+        stage('Push Docker Image') {
+            steps {
+                script {
+                    docker.withRegistry('https://index.docker.io/v1/', 'dockerhub-credentials') {
+                        docker.image("${env.IMAGE_NAME}:${env.BUILD_ID}").push()
+                    }
+                }
+            }
+        }
+
+        stage('Deploy to Linux Server') {
+            steps {
+                script {
+                    def remote = [:]
+                    remote.name = 'linux'
+                    remote.host = "${env.LINUX_SERVER_IP}"
+                    remote.user = 'ubuntu' // 리눅스 서버의 사용자 이름
+                    remote.identityFile = SSH_KEY
+                    remote.allowAnyHosts = true
+
+                    sshCommand remote: remote, command: """
+                        docker pull ${env.IMAGE_NAME}:${env.BUILD_ID}
+                        docker stop my-app || true
+                        docker rm my-app || true
+                        docker run -d -p 8090:8080 --name my-app ${env.IMAGE_NAME}:${env.BUILD_ID}
+                        docker image prune
+                    """
+                }
+            }
+        }
+    }
+}
